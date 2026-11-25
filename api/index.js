@@ -45,19 +45,18 @@ function parseTorrent(buf) {
   return { infoHash, length, trackers: [...new Set(tr)] };
 }
 
-async function dbxList(token, folder) {
-  let entries = [];
-  let body = JSON.stringify({ path: folder || '', recursive: true });
-  let data = await reqHttps({ hostname: '://dropboxapi.com', path: '/2/files/list_folder', method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, body);
-  let json = JSON.parse(data.toString());
-  if (json.entries) entries.push(...json.entries);
-  while (json.has_more && json.cursor) {
-    body = JSON.stringify({ cursor: json.cursor });
-    data = await reqHttps({ hostname: '://dropboxapi.com', path: '/2/files/list_folder/continue', method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, body);
-    json = JSON.parse(data.toString());
-    if (json.entries) entries.push(...json.entries);
-  }
-  return entries;
+async function dbxSearch(token, query, folder, ext) {
+  const options = { filename_only: true, max_results: 50, file_extensions: [ext] };
+  if (folder) options.path = folder.startsWith('/') ? folder : '/' + folder;
+  const body = JSON.stringify({ query, options });
+  const data = await reqHttps({
+    hostname: 'api.dropboxapi.com',
+    path: '/2/files/search_v2',
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+  }, body);
+  const json = JSON.parse(data.toString());
+  return (json.matches || []).map(m => m.metadata?.metadata).filter(Boolean);
 }
 
 async function getTitle(type, id) {
@@ -80,7 +79,7 @@ module.exports = async (req, res) => {
   }
 
   if (!route || route === 'manifest.json') {
-    return res.status(200).json({ id: 'community.dbx.personal', version: '1.0.2', name: 'My Dropbox Torrents & Subs', description: 'Лични торенти и субтитри от Dropbox', resources: ['stream', 'subtitles'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: [] });
+    return res.status(200).json({ id: 'community.dbx.personal', version: '1.0.3', name: 'My Dropbox Torrents & Subs', description: 'Лични торенти и субтитри от Dropbox', resources: ['stream', 'subtitles'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: [] });
   }
 
   const cfg = getCfg(cfgParam);
@@ -95,13 +94,19 @@ module.exports = async (req, res) => {
     const kw = title.toLowerCase().replace(/[^a-z0-9а-я]/gi, ' ').trim().split(/\s+/).filter(w => w.length > 2);
     if (!kw.length) return res.status(200).json({ streams: [], subtitles: [] });
 
-    const files = await dbxList(cfg.t, cfg.f);
-    const match = (ext) => files.filter(f => f['.tag'] === 'file' && f.name.toLowerCase().endsWith(ext) && kw.every(k => f.name.toLowerCase().replace(/[^a-z0-9а-я]/gi, ' ').includes(k)));
+    const ext = resType === 'stream' ? 'torrent' : 'srt';
+    const found = await dbxSearch(cfg.t, title, cfg.f, ext);
+    const matches = found.filter(f => f['.tag'] === 'file' && kw.every(k => f.name.toLowerCase().replace(/[^a-z0-9а-я]/gi, ' ').includes(k)));
 
     if (resType === 'stream') {
       const streams = [];
-      for (const f of match('.torrent')) {
-        const buf = await reqHttps({ hostname: '://dropboxapi.com', path: '/2/files/download', method: 'POST', headers: { Authorization: 'Bearer ' + cfg.t, 'Dropbox-API-Arg': JSON.stringify({ path: f.path_lower }) } });
+      for (const f of matches) {
+        const buf = await reqHttps({
+          hostname: 'content.dropboxapi.com',
+          path: '/2/files/download',
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + cfg.t, 'Dropbox-API-Arg': JSON.stringify({ path: f.path_lower }) }
+        });
         const pt = parseTorrent(buf);
         if (pt?.infoHash) streams.push({ name: 'Dropbox', title: `📁 ${f.name}\n💾 ${(pt.length / 1073741824).toFixed(2)} GB`, infoHash: pt.infoHash, sources: pt.trackers.map(tr => 'tracker:' + tr) });
       }
@@ -110,14 +115,21 @@ module.exports = async (req, res) => {
 
     if (resType === 'subtitles') {
       const subtitles = [];
-      for (const f of match('.srt')) {
+      for (const f of matches) {
         const body = JSON.stringify({ path: f.path_lower });
-        const d = await reqHttps({ hostname: '://dropboxapi.com', path: '/2/files/get_temporary_link', method: 'POST', headers: { Authorization: 'Bearer ' + cfg.t, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, body);
+        const d = await reqHttps({
+          hostname: 'api.dropboxapi.com',
+          path: '/2/files/get_temporary_link',
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + cfg.t, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+        }, body);
         const j = JSON.parse(d.toString());
         if (j?.link) subtitles.push({ id: f.id, url: j.link, lang: 'bul' });
       }
       return res.status(200).json({ subtitles });
     }
-  } catch (e) {}
+  } catch (e) {
+    return res.status(200).json({ streams: [], subtitles: [], error: e.message });
+  }
   return res.status(200).json({ streams: [], subtitles: [] });
 };
