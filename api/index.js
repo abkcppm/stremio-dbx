@@ -1,7 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const parseTorrent = require('parse-torrent');
+const bencode = require('bencode');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
@@ -56,6 +57,26 @@ function getConfig(configStr) {
   }
 }
 
+function parseTorrentBuffer(buf) {
+  const torrent = bencode.decode(buf);
+  const infoEncoded = bencode.encode(torrent.info);
+  const infoHash = crypto.createHash('sha1').update(infoEncoded).digest('hex');
+  let length = 0;
+  if (torrent.info.files) {
+    length = torrent.info.files.reduce((acc, f) => acc + f.length, 0);
+  } else {
+    length = torrent.info.length || 0;
+  }
+  const trackers = [];
+  if (torrent.announce) trackers.push(Buffer.from(torrent.announce).toString('utf8'));
+  if (torrent['announce-list']) {
+    torrent['announce-list'].forEach(tier => {
+      tier.forEach(tr => trackers.push(Buffer.from(tr).toString('utf8')));
+    });
+  }
+  return { infoHash, length, trackers: [...new Set(trackers)] };
+}
+
 app.get('/:config/manifest.json', (req, res) => {
   res.json({
     id: 'community.dropbox.torrents.subs',
@@ -79,7 +100,7 @@ async function listDropboxFiles(token, folder) {
 }
 
 async function getTitleFromImdb(type, imdbId) {
-  const baseId = imdbId.split(':')[0];
+  const baseId = imdbId.split(':');
   const res = await axios.get(`https://strem.io{type}/${baseId}.json`);
   return res.data?.meta?.name || '';
 }
@@ -117,13 +138,13 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
         }
       );
 
-      const parsed = await parseTorrent(Buffer.from(dlRes.data));
+      const parsed = parseTorrentBuffer(Buffer.from(dlRes.data));
       if (parsed && parsed.infoHash) {
         streams.push({
           name: 'Dropbox',
           title: `📁 ${file.name}\n💾 ${(parsed.length / (1024 ** 3)).toFixed(2)} GB`,
           infoHash: parsed.infoHash,
-          sources: (parsed.announce || []).map(tr => `tracker:${tr}`)
+          sources: parsed.trackers.map(tr => `tracker:${tr}`)
         });
       }
     }
