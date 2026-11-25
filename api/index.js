@@ -5,6 +5,17 @@ const API_HOST = ['api', 'dropboxapi', 'com'].join('.');
 const CONTENT_HOST = ['content', 'dropboxapi', 'com'].join('.');
 const META_HOST = ['v3-cinemeta', 'strem', 'io'].join('.');
 
+const PUBLIC_TRACKERS = [
+  'udp://tracker.opentrackr.org:1337/announce',
+  'udp://open.stealth.si:80/announce',
+  'udp://tracker.torrent.eu.org:451/announce',
+  'udp://tracker.bittor.pw:1337/announce',
+  'udp://public.popcorn-tracker.org:6969/announce',
+  'udp://tracker.dler.org:6969/announce',
+  'udp://://desync.com',
+  'udp://://demonii.com'
+];
+
 const getCfg = (s) => { try { return JSON.parse(Buffer.from(s, 'base64url').toString('utf8')); } catch { return null; } };
 
 const asciiJson = (obj) => JSON.stringify(obj).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -44,11 +55,26 @@ function parseTorrent(buf) {
   const [t] = decodeBencode(buf);
   if (!t?._raw) return null;
   const infoHash = crypto.createHash('sha1').update(t._raw).digest('hex');
-  const length = Array.isArray(t.info.files) ? t.info.files.reduce((a, f) => a + (f.length || 0), 0) : (t.info.length || 0);
-  const tr = [];
-  if (t.announce) tr.push(t.announce.toString());
-  if (Array.isArray(t['announce-list'])) t['announce-list'].forEach(tier => Array.isArray(tier) && tier.forEach(x => tr.push(x.toString())));
-  return { infoHash, length, trackers: [...new Set(tr)] };
+  let length = 0;
+  let fileIdx = 0;
+  if (Array.isArray(t.info.files)) {
+    let maxLen = -1;
+    t.info.files.forEach((f, idx) => {
+      const fl = f.length || 0;
+      length += fl;
+      const fname = Array.isArray(f.path) ? f.path.at(-1).toString().toLowerCase() : '';
+      if (/\.(mkv|mp4|avi|mov|wmv|m4v)$/.test(fname) && fl > maxLen) {
+        maxLen = fl;
+        fileIdx = idx;
+      }
+    });
+  } else {
+    length = t.info.length || 0;
+  }
+  const tr = [...PUBLIC_TRACKERS];
+  if (t.announce) tr.unshift(t.announce.toString());
+  if (Array.isArray(t['announce-list'])) t['announce-list'].forEach(tier => Array.isArray(tier) && tier.forEach(x => tr.unshift(x.toString())));
+  return { infoHash, length, fileIdx, trackers: [...new Set(tr)] };
 }
 
 async function dbxSearch(token, query, folder, ext) {
@@ -93,7 +119,7 @@ module.exports = async (req, res) => {
   }
 
   if (!parts.length || parts.at(0) === 'manifest.json') {
-    return res.status(200).json({ id: 'community.dbx.personal', version: '1.0.7', name: 'My Dropbox Torrents & Subs', description: 'Лични торенти и субтитри от Dropbox', resources: ['stream', 'subtitles'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: [] });
+    return res.status(200).json({ id: 'community.dbx.personal', version: '1.0.8', name: 'My Dropbox Torrents & Subs', description: 'Лични торенти и субтитри от Dropbox', resources: ['stream', 'subtitles'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: [] });
   }
 
   const cfg = getCfg(cfgChunks.join(''));
@@ -139,7 +165,10 @@ module.exports = async (req, res) => {
           headers: { Authorization: 'Bearer ' + cfg.t, 'Dropbox-API-Arg': asciiJson({ path: f.path_lower }) }
         });
         const pt = parseTorrent(buf);
-        if (pt?.infoHash) streams.push({ name: 'Dropbox', title: `📁 ${f.name}\n💾 ${(pt.length / 1073741824).toFixed(2)} GB`, infoHash: pt.infoHash, sources: pt.trackers.map(tr => 'tracker:' + tr) });
+        if (pt?.infoHash) {
+          const sources = [...pt.trackers.map(tr => 'tracker:' + tr), 'dht:' + pt.infoHash];
+          streams.push({ name: 'Dropbox', title: `📁 ${f.name}\n💾 ${(pt.length / 1073741824).toFixed(2)} GB`, infoHash: pt.infoHash, fileIdx: pt.fileIdx, sources });
+        }
       }
       return res.status(200).json({ streams });
     }
