@@ -1,6 +1,10 @@
 const https = require('https');
 const crypto = require('crypto');
 
+const API_HOST = ['api', 'dropboxapi', 'com'].join('.');
+const CONTENT_HOST = ['content', 'dropboxapi', 'com'].join('.');
+const META_HOST = ['v3-cinemeta', 'strem', 'io'].join('.');
+
 const getCfg = (s) => { try { return JSON.parse(Buffer.from(s, 'base64url').toString('utf8')); } catch { return null; } };
 
 const asciiJson = (obj) => JSON.stringify(obj).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -52,7 +56,7 @@ async function dbxSearch(token, query, folder, ext) {
   if (folder) options.path = folder.startsWith('/') ? folder : '/' + folder;
   const body = JSON.stringify({ query, options });
   const data = await reqHttps({
-    hostname: '://dropboxapi.com',
+    hostname: API_HOST,
     path: '/2/files/search_v2',
     method: 'POST',
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
@@ -62,7 +66,7 @@ async function dbxSearch(token, query, folder, ext) {
 }
 
 async function getTitle(type, id) {
-  const data = await reqHttps({ hostname: 'v3-cinemeta.strem.io', path: `/meta/${type}/${id.split(':').at(0)}.json`, method: 'GET' });
+  const data = await reqHttps({ hostname: META_HOST, path: `/meta/${type}/${id.split(':').at(0)}.json`, method: 'GET' });
   return JSON.parse(data.toString())?.meta?.name || '';
 }
 
@@ -81,7 +85,7 @@ module.exports = async (req, res) => {
   }
 
   if (!route || route === 'manifest.json') {
-    return res.status(200).json({ id: 'community.dbx.personal', version: '1.0.4', name: 'My Dropbox Torrents & Subs', description: 'Лични торенти и субтитри от Dropbox', resources: ['stream', 'subtitles'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: [] });
+    return res.status(200).json({ id: 'community.dbx.personal', version: '1.0.5', name: 'My Dropbox Torrents & Subs', description: 'Лични торенти и субтитри от Dropbox', resources: ['stream', 'subtitles'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: [] });
   }
 
   const cfg = getCfg(cfgParam);
@@ -122,7 +126,7 @@ module.exports = async (req, res) => {
       const streams = [];
       for (const f of matches) {
         const buf = await reqHttps({
-          hostname: '://dropboxapi.com',
+          hostname: CONTENT_HOST,
           path: '/2/files/download',
           method: 'POST',
           headers: { Authorization: 'Bearer ' + cfg.t, 'Dropbox-API-Arg': asciiJson({ path: f.path_lower }) }
@@ -138,7 +142,7 @@ module.exports = async (req, res) => {
       for (const f of matches) {
         const body = JSON.stringify({ path: f.path_lower });
         const d = await reqHttps({
-          hostname: '://dropboxapi.com',
+          hostname: API_HOST,
           path: '/2/files/get_temporary_link',
           method: 'POST',
           headers: { Authorization: 'Bearer ' + cfg.t, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
