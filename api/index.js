@@ -73,23 +73,25 @@ async function getTitle(type, id) {
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   const fullUrl = new URL(req.url, 'https://' + (req.headers.host || 'localhost'));
-  const cfgParam = fullUrl.searchParams.get('cfg');
-  const route = fullUrl.pathname.replace(/^\/api\/?/, '');
+  const cleanPath = fullUrl.pathname.replace(/^\/api\/?/, '');
+  const segs = cleanPath.split('/').filter(Boolean);
 
-  if (!cfgParam) {
+  if (!segs.length || segs.at(0) === 'manifest.json') {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.status(200).send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Dropbox Stremio</title>
 <style>body{font-family:sans-serif;background:#121212;color:#fff;display:flex;justify-content:center;padding-top:50px}.box{background:#1e1e1e;padding:30px;border-radius:12px;width:400px}input{width:100%;padding:10px;margin:8px 0 16px;border-radius:6px;border:1px solid #333;background:#2a2a2a;color:#fff;box-sizing:border-box}button{width:100%;padding:12px;background:#7b5bf5;color:#fff;border:none;border-radius:6px;font-size:16px;cursor:pointer;font-weight:bold}</style>
 </head><body><div class="box"><h2>Dropbox за Stremio</h2><label>Dropbox Access Token:</label><input type="password" id="t" placeholder="sl.u..."><label>Папка (по желание):</label><input type="text" id="f" placeholder="Остави празно за App Folder"><button onclick="go()">Инсталирай в Stremio</button></div>
-<script>function go(){const t=document.getElementById('t').value.trim(),f=document.getElementById('f').value.trim();if(!t)return alert('Въведи Token!');const b=btoa(JSON.stringify({t,f})).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');window.location.href='stremio://'+window.location.host+'/api?cfg='+b;}</script></body></html>`);
+<script>function go(){const t=document.getElementById('t').value.trim(),f=document.getElementById('f').value.trim();if(!t)return alert('Въведи Token!');const b=btoa(JSON.stringify({t,f})).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');window.location.href='stremio://'+window.location.host+'/api/'+b+'/manifest.json';}</script></body></html>`);
   }
 
-  if (!route || route === 'manifest.json') {
-    return res.status(200).json({ id: 'community.dbx.personal', version: '1.0.5', name: 'My Dropbox Torrents & Subs', description: 'Лични торенти и субтитри от Dropbox', resources: ['stream', 'subtitles'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: [] });
+  const cfgParam = segs.at(0);
+  const parts = segs.slice(1);
+
+  if (!parts.length || parts.at(0) === 'manifest.json') {
+    return res.status(200).json({ id: 'community.dbx.personal', version: '1.0.6', name: 'My Dropbox Torrents & Subs', description: 'Лични торенти и субтитри от Dropbox', resources: ['stream', 'subtitles'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: [] });
   }
 
   const cfg = getCfg(cfgParam);
-  const parts = route.split('/').filter(Boolean);
   if (!cfg?.t || parts.length < 3) return res.status(200).json({ streams: [], subtitles: [] });
 
   try {
