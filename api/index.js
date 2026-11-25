@@ -69,7 +69,7 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   const fullUrl = new URL(req.url, 'https://' + (req.headers.host || 'localhost'));
   const cfgParam = fullUrl.searchParams.get('cfg');
-  const route = fullUrl.searchParams.get('r') || '';
+  const route = fullUrl.pathname.replace(/^\/api\/?/, '');
 
   if (!cfgParam) {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
