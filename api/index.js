@@ -1,7 +1,7 @@
 const https = require('https');
 const crypto = require('crypto');
 
-const getCfg = (s) => { try { return JSON.parse(Buffer.from(s, 'base64').toString('utf8')); } catch { return null; } };
+const getCfg = (s) => { try { return JSON.parse(Buffer.from(s, 'base64url').toString('utf8')); } catch { return null; } };
 
 const reqHttps = (opts, body = null) => new Promise((resolve, reject) => {
   const r = https.request(opts, (res) => {
@@ -16,7 +16,7 @@ const reqHttps = (opts, body = null) => new Promise((resolve, reject) => {
 
 function decodeBencode(buf, o = 0) {
   const c = buf.at(o);
-  if (c === 105) { const e = buf.indexOf(101, o); return [parseInt(buf.slice(o + 1, e).toString(), 10), e + 1]; }
+  if (c === 105) { const e = buf.indexOf(101, o); return [parseInt(buf.slice(o + 1, e).toString('utf8'), 10), e + 1]; }
   if (c === 108) { const l = []; let p = o + 1; while (buf.at(p) !== 101) { const [v, np] = decodeBencode(buf, p); l.push(v); p = np; } return [l, p + 1]; }
   if (c === 100) {
     const d = {}; let p = o + 1, s = -1, e = -1;
@@ -30,7 +30,7 @@ function decodeBencode(buf, o = 0) {
     if (s !== -1 && e !== -1) d._raw = buf.slice(s, e);
     return [d, p + 1];
   }
-  const col = buf.indexOf(58, o); const len = parseInt(buf.slice(o, col).toString(), 10);
+  const col = buf.indexOf(58, o); const len = parseInt(buf.slice(o, col).toString('utf8'), 10);
   return [buf.slice(col + 1, col + 1 + len), col + 1 + len];
 }
 
@@ -46,9 +46,18 @@ function parseTorrent(buf) {
 }
 
 async function dbxList(token, folder) {
-  const body = JSON.stringify({ path: folder || '', recursive: true });
-  const data = await reqHttps({ hostname: '://dropboxapi.com', path: '/2/files/list_folder', method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, body);
-  return JSON.parse(data.toString()).entries || [];
+  let entries = [];
+  let body = JSON.stringify({ path: folder || '', recursive: true });
+  let data = await reqHttps({ hostname: '://dropboxapi.com', path: '/2/files/list_folder', method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, body);
+  let json = JSON.parse(data.toString());
+  if (json.entries) entries.push(...json.entries);
+  while (json.has_more && json.cursor) {
+    body = JSON.stringify({ cursor: json.cursor });
+    data = await reqHttps({ hostname: '://dropboxapi.com', path: '/2/files/list_folder/continue', method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, body);
+    json = JSON.parse(data.toString());
+    if (json.entries) entries.push(...json.entries);
+  }
+  return entries;
 }
 
 async function getTitle(type, id) {
@@ -58,33 +67,38 @@ async function getTitle(type, id) {
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  const url = (req.url || '/').split('?').at(0);
+  const fullUrl = new URL(req.url, 'https://' + (req.headers.host || 'localhost'));
+  const path = fullUrl.pathname;
+  const cfgParam = fullUrl.searchParams.get('cfg');
 
-  if (url === '/' || url === '/api' || url === '/api/index') {
+  if ((path === '/' || path === '/api' || path === '/api/index') && !cfgParam) {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.status(200).send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Dropbox Stremio</title>
 <style>body{font-family:sans-serif;background:#121212;color:#fff;display:flex;justify-content:center;padding-top:50px}.box{background:#1e1e1e;padding:30px;border-radius:12px;width:400px}input{width:100%;padding:10px;margin:8px 0 16px;border-radius:6px;border:1px solid #333;background:#2a2a2a;color:#fff;box-sizing:border-box}button{width:100%;padding:12px;background:#7b5bf5;color:#fff;border:none;border-radius:6px;font-size:16px;cursor:pointer;font-weight:bold}</style>
-</head><body><div class="box"><h2>Dropbox за Stremio</h2><label>Dropbox Access Token:</label><input type="password" id="t" placeholder="sl.B..."><label>Папка (по желание):</label><input type="text" id="f" placeholder="/Torrents"><button onclick="go()">Инсталирай в Stremio</button></div>
-<script>function go(){const t=document.getElementById('t').value.trim(),f=document.getElementById('f').value.trim();if(!t)return alert('Въведи Token!');window.location.href='stremio://'+window.location.host+'/api/'+btoa(JSON.stringify({t,f}))+'/manifest.json';}</script></body></html>`);
+</head><body><div class="box"><h2>Dropbox за Stremio</h2><label>Dropbox Access Token:</label><input type="password" id="t" placeholder="sl.u..."><label>Папка (по желание):</label><input type="text" id="f" placeholder="Остави празно за App Folder"><button onclick="go()">Инсталирай в Stremio</button></div>
+<script>function go(){const t=document.getElementById('t').value.trim(),f=document.getElementById('f').value.trim();if(!t)return alert('Въведи Token!');const b=btoa(JSON.stringify({t,f})).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');window.location.href='stremio://'+window.location.host+'/api/manifest.json?cfg='+b;}</script></body></html>`);
   }
 
-  const p = url.replace(/^\/api\//, '/').split('/').filter(Boolean);
-  if (p.length === 2 && p.at(1) === 'manifest.json') {
-    return res.status(200).json({ id: 'community.dbx.personal', version: '1.0.0', name: 'My Dropbox Torrents & Subs', description: 'Лични торенти и субтитри от Dropbox', resources: ['stream', 'subtitles'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: [] });
+  if (path.endsWith('/manifest.json')) {
+    return res.status(200).json({ id: 'community.dbx.personal', version: '1.0.1', name: 'My Dropbox Torrents & Subs', description: 'Лични торенти и субтитри от Dropbox', resources: ['stream', 'subtitles'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: [] });
   }
 
-  const cfg = getCfg(p.at(0));
-  if (!cfg?.t || p.length < 4) return res.status(200).json({ streams: [], subtitles: [] });
+  const cfg = getCfg(cfgParam);
+  const parts = path.replace(/^\/api\//, '/').split('/').filter(Boolean);
+  if (!cfg?.t || parts.length < 3) return res.status(200).json({ streams: [], subtitles: [] });
 
   try {
-    const title = await getTitle(p.at(2), p.at(3).replace('.json', ''));
+    const resType = parts.at(0);
+    const mediaType = parts.at(1);
+    const mediaId = parts.at(2).replace('.json', '');
+    const title = await getTitle(mediaType, mediaId);
     const kw = title.toLowerCase().replace(/[^a-z0-9а-я]/gi, ' ').trim().split(/\s+/).filter(w => w.length > 2);
     if (!kw.length) return res.status(200).json({ streams: [], subtitles: [] });
 
     const files = await dbxList(cfg.t, cfg.f);
     const match = (ext) => files.filter(f => f['.tag'] === 'file' && f.name.toLowerCase().endsWith(ext) && kw.every(k => f.name.toLowerCase().replace(/[^a-z0-9а-я]/gi, ' ').includes(k)));
 
-    if (p.at(1) === 'stream') {
+    if (resType === 'stream') {
       const streams = [];
       for (const f of match('.torrent')) {
         const buf = await reqHttps({ hostname: '://dropboxapi.com', path: '/2/files/download', method: 'POST', headers: { Authorization: 'Bearer ' + cfg.t, 'Dropbox-API-Arg': JSON.stringify({ path: f.path_lower }) } });
@@ -94,7 +108,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({ streams });
     }
 
-    if (p.at(1) === 'subtitles') {
+    if (resType === 'subtitles') {
       const subtitles = [];
       for (const f of match('.srt')) {
         const body = JSON.stringify({ path: f.path_lower });
