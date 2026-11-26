@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const API_HOST = ['api', 'dropboxapi', 'com'].join('.');
 const CONTENT_HOST = ['content', 'dropboxapi', 'com'].join('.');
 const META_HOST = ['v3-cinemeta', 'strem', 'io'].join('.');
-const AUTH_URL = 'https://dropbox.com';
+const AUTH_URL = 'https://' + ['www', 'dropbox', 'com'].join('.') + '/oauth2/authorize';
 
 const PUBLIC_TRACKERS = [
   'udp://tracker.opentrackr.org:1337/announce',
