@@ -170,7 +170,7 @@ module.exports = async (req, res) => {
   if (resIdx !== -1) { cfgChunks = segs.slice(0, resIdx); parts = segs.slice(resIdx); }
 
   if (!parts.length || parts.at(0) === 'manifest.json') {
-    return res.status(200).json({ id: 'community.dbx.personal', version: '1.1.0', name: 'Dropbox Torrents & Subs', description: 'Лични торенти и субтитри от Dropbox', resources: ['stream', 'subtitles'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: [] });
+    return res.status(200).json({ id: 'community.dbx.personal', version: '1.1.1', name: 'Dropbox Torrents & Subs', description: 'Лични торенти и субтитри от Dropbox', resources: ['stream', 'subtitles'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: [] });
   }
 
   const cfg = getCfg(cfgChunks.join(''));
@@ -244,7 +244,7 @@ module.exports = async (req, res) => {
       const subtitles = [];
       for (const f of matches) {
         const link = await getTempLink(token, f.path_lower);
-        if (link) subtitles.push({ id: f.id, url: link, lang: 'bul' });
+        if (link) subtitles.push({ id: f.id, url: link, lang: 'bul', name: `📦 ${f.name}` });
       }
       return res.status(200).json({ subtitles });
     }
@@ -253,4 +253,3 @@ module.exports = async (req, res) => {
   }
   return res.status(200).json({ streams: [], subtitles: [] });
 };
-
