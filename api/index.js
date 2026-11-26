@@ -13,6 +13,8 @@ const PUBLIC_TRACKERS = [
   'udp://://demonii.com'
 ];
 
+const LOGO_SVG = `<svg xmlns="http://w3.org" viewBox="0 0 256 256"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0061ff"/><stop offset="100%" stop-color="#7b5bf5"/></linearGradient></defs><rect width="256" height="256" rx="56" fill="url(#g)"/><path d="M88 64l40 26-40 26-40-26zm80 0l40 26-40 26-40-26zM48 142l40-26 40 26-40 26zm120-26l40 26-40 26-40-26zm-80 62l40-26 40 26-40 26z" fill="#fff" opacity="0.95"/><circle cx="192" cy="192" r="42" fill="#121212"/><path d="M180 174l28 18-28 18z" fill="#7b5bf5"/></svg>`;
+
 const getCfg = (s) => { try { return JSON.parse(Buffer.from(s, 'base64url').toString('utf8')); } catch { return null; } };
 const encCfg = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
 const asciiJson = (obj) => JSON.stringify(obj).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -126,6 +128,12 @@ module.exports = async (req, res) => {
   const cleanPath = fullUrl.pathname.replace(/^\/api\/?/, '');
   const segs = cleanPath.split('/').filter(Boolean);
 
+  if (segs.at(0) === 'logo.svg') {
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.status(200).send(LOGO_SVG);
+  }
+
   if (segs.at(0) === 'login') {
     const state = encCfg({ f: fullUrl.searchParams.get('f') || '', ts: fullUrl.searchParams.get('ts') || '' });
     const url = `${AUTH_URL}?client_id=${process.env.DBX_APP_KEY}&response_type=code&token_access_type=offline&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
@@ -136,7 +144,7 @@ module.exports = async (req, res) => {
   if (segs.at(0) === 'callback') {
     const code = fullUrl.searchParams.get('code');
     const st = getCfg(fullUrl.searchParams.get('state') || '') || {};
-    if (!code) return res.status(400).send('Липсва код от Dropbox.');
+    if (!code) return res.status(400).send('Missing Dropbox authorization code.');
     const params = new URLSearchParams({
       code,
       grant_type: 'authorization_code',
@@ -151,18 +159,18 @@ module.exports = async (req, res) => {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(params) }
     }, params);
     const json = JSON.parse(data.toString());
-    if (!json.refresh_token) return res.status(400).send('Грешка при свързване с Dropbox: ' + data.toString());
+    if (!json.refresh_token) return res.status(400).send('Dropbox OAuth Error: ' + data.toString());
     const cfgStr = encCfg({ r: json.refresh_token, f: st.f, ts: st.ts });
     const parts = cfgStr.match(/.{1,200}/g).join('/');
     const stremioUrl = `stremio://${host}/api/${parts}/manifest.json`;
     const httpsUrl = `https://${host}/api/${parts}/manifest.json`;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return res.status(200).send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Готово!</title><style>body{font-family:sans-serif;background:#121212;color:#fff;display:flex;justify-content:center;padding-top:50px}.box{background:#1e1e1e;padding:30px;border-radius:12px;width:420px;text-align:center}a.btn{display:block;padding:14px;background:#7b5bf5;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;margin:16px 0}input{width:100%;padding:10px;border-radius:6px;border:1px solid #333;background:#2a2a2a;color:#aaa;box-sizing:border-box}</style></head><body><div class="box"><h2>✅ Dropbox е свързан завинаги!</h2><p>Достъпът ти няма да изтича на 4 часа.</p><a class="btn" href="${stremioUrl}">Инсталирай в Stremio</a><p style="font-size:12px;color:#888">Или копирай линка за ръчно поставяне в Stremio:</p><input type="text" value="${httpsUrl}" onclick="this.select()"></div></body></html>`);
+    return res.status(200).send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dropbox Connected</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f1117;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:16px}.box{background:#181b24;padding:32px;border-radius:16px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.45);border:1px solid #262b38}img{width:72px;height:72px;margin-bottom:12px}h2{margin:8px 0;font-size:22px}p{color:#9ca3af;font-size:14px;line-height:1.5}a.btn{display:block;padding:14px;background:linear-gradient(135deg,#0061ff,#7b5bf5);color:#fff;text-decoration:none;border-radius:10px;font-weight:600;font-size:16px;margin:20px 0 14px}input{width:100%;padding:10px;border-radius:8px;border:1px solid #2e3444;background:#10131a;color:#9ca3af;font-size:12px;box-sizing:border-box}</style></head><body><div class="box"><img src="/api/logo.svg" alt="Logo"><h2>✅ Dropbox е свързан! / Connected!</h2><p>Постоянният достъп е активиран (не изтича).<br>Permanent access enabled (never expires).</p><a class="btn" href="${stremioUrl}">🚀 Инсталирай в Stremio / Install</a><p style="font-size:12px">Или копирай линка за ръчно добавяне / Or copy manifest URL:</p><input type="text" value="${httpsUrl}" onclick="this.select()" readonly></div></body></html>`);
   }
 
   if (!segs.length || segs.at(0) === 'manifest.json') {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return res.status(200).send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Dropbox Stremio</title><style>body{font-family:sans-serif;background:#121212;color:#fff;display:flex;justify-content:center;padding-top:50px}.box{background:#1e1e1e;padding:30px;border-radius:12px;width:420px}label{display:block;font-size:14px;color:#ccc;margin-top:12px}input{width:100%;padding:10px;margin:6px 0 12px;border-radius:6px;border:1px solid #333;background:#2a2a2a;color:#fff;box-sizing:border-box}button{width:100%;padding:14px;background:#0061ff;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;font-weight:bold;margin-top:10px}</style></head><body><div class="box"><h2>📦 Dropbox за Stremio</h2><p style="color:#aaa;font-size:14px">Гледай личните си .torrent и .srt файлове директно от Dropbox.</p><label>Папка в App Folder (по желание):</label><input type="text" id="f" placeholder="Остави празно за всички папки"><label>TorrServe URL за частни тракери (по желание):</label><input type="text" id="ts" placeholder="напр. http://127.0.0.1:8090"><button onclick="location.href='/api/login?f='+encodeURIComponent(document.getElementById('f').value.trim())+'&ts='+encodeURIComponent(document.getElementById('ts').value.trim())">🔗 Свържи с Dropbox</button></div></body></html>`);
+    return res.status(200).send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dropbox Torrents & Subs for Stremio</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f1117;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:16px}.box{background:#181b24;padding:32px;border-radius:16px;max-width:460px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.45);border:1px solid #262b38}.hdr{text-align:center;margin-bottom:20px}.hdr img{width:72px;height:72px;margin-bottom:8px}.hdr h2{margin:4px 0;font-size:22px}.hdr p{color:#9ca3af;font-size:13px;margin:0}label{display:block;font-size:13px;color:#d1d5db;margin-top:14px;font-weight:500}input{width:100%;padding:11px 12px;margin:6px 0 4px;border-radius:8px;border:1px solid #2e3444;background:#10131a;color:#fff;box-sizing:border-box;font-size:14px}.hint{font-size:11px;color:#6b7280;margin-bottom:8px}button{width:100%;padding:14px;background:#0061ff;color:#fff;border:none;border-radius:10px;font-size:16px;cursor:pointer;font-weight:600;margin-top:16px;transition:background .2s}button:hover{background:#0052d9}.info{margin-top:20px;padding-top:16px;border-top:1px solid #262b38;font-size:12px;color:#9ca3af;line-height:1.5}</style></head><body><div class="box"><div class="hdr"><img src="/api/logo.svg" alt="Logo"><h2>Dropbox Torrents & Subs</h2><p>Стриймвай личните си .torrent и .srt файлове от Dropbox<br>Stream your personal .torrent & .srt files from Dropbox</p></div><label>📁 Папка / Subfolder (по желание / optional):</label><input type="text" id="f" placeholder="Остави празно за всички папки / Leave empty for all"><div class="hint">Търси в <b>Dropbox &gt; Apps &gt; StremioDBX</b> (без база данни / stateless).</div><label>⚡ TorrServe URL (по желание / optional):</label><input type="text" id="ts" placeholder="http://127.0.0.1:8090"><div class="hint">За частни тракери (Zamunda/ArenaBG) на Android TV / For private trackers.</div><button onclick="location.href='/api/login?f='+encodeURIComponent(document.getElementById('f').value.trim())+'&ts='+encodeURIComponent(document.getElementById('ts').value.trim())">🔗 Свържи с Dropbox / Connect Dropbox</button><div class="info">🔒 <b>100% Stateless &amp; Private:</b> Сървърът не записва токени или файлове. Всеки потребител вижда единствено собствената си папка в Dropbox.</div></div></body></html>`);
   }
 
   let cfgChunks = segs, parts = [];
@@ -170,7 +178,18 @@ module.exports = async (req, res) => {
   if (resIdx !== -1) { cfgChunks = segs.slice(0, resIdx); parts = segs.slice(resIdx); }
 
   if (!parts.length || parts.at(0) === 'manifest.json') {
-    return res.status(200).json({ id: 'community.dbx.personal', version: '1.1.1', name: 'Dropbox Torrents & Subs', description: 'Лични торенти и субтитри от Dropbox', resources: ['stream', 'subtitles'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: [] });
+    return res.status(200).json({
+      id: 'community.dbx.personal',
+      version: '1.2.0',
+      name: 'Dropbox Torrents & Subs',
+      description: 'Stream your personal .torrent and .srt files directly from Dropbox (Stateless & Private).',
+      logo: `https://${host}/api/logo.svg`,
+      resources: ['stream', 'subtitles'],
+      types: ['movie', 'series'],
+      idPrefixes: ['tt'],
+      catalogs: [],
+      behaviorHints: { configurable: true, configurationRequired: false }
+    });
   }
 
   const cfg = getCfg(cfgChunks.join(''));
